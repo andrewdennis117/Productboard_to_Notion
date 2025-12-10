@@ -1,0 +1,39 @@
+name: ProductBoard Sync
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run sync
+        run: node scripts/sync-productboard-to-notion.js
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          PRODUCTBOARD_API_TOKEN: ${{ secrets.PRODUCTBOARD_API_TOKEN }}
+          NOTION_RELEASES_DB_ID: ${{ secrets.NOTION_RELEASES_DB_ID }}
+          NOTION_FEATURES_DB_ID: ${{ secrets.NOTION_FEATURES_DB_ID }}
+      
+      - name: Upload logs (if exists)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-logs
+          path: logs/*.log
+          if-no-files-found: ignore
+

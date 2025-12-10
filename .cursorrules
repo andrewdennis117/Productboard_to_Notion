@@ -1,0 +1,278 @@
+# ProductBoard → Notion Sync - Cursor AI Instructions
+
+## Project Overview
+
+**Goal:** Sync ProductBoard releases and features into two Notion databases with automatic health tracking.
+
+**Current Phase:** [USER WILL UPDATE THIS]
+
+**Key Files:**
+- PROJECT-PLAN.md - Master implementation plan with phases
+- .env.personal - API tokens and database IDs
+- scripts/ - All executable scripts organized by phase
+
+---
+
+## Architecture
+
+### Data Flow:
+```
+ProductBoard API (v1)
+  ├─ GET /releases
+  ├─ GET /feature-release-assignments
+  └─ GET /features/{id}
+       ↓
+  [Sync Script]
+       ↓
+Notion API
+  ├─ Releases Database (18 items)
+  └─ Features Database (168 items)
+       ↓
+  [Two-way Relation]
+       ↓
+  Automatic Rollups:
+    - Feature Count
+    - On Track Count  
+    - At Risk Count
+    - Health %
+```
+
+### Database Schema:
+
+**Releases Database:**
+```javascript
+{
+  Name: { type: 'title' },                    // "v2.22 (May 5)"
+  'Productboard ID': { type: 'rich_text' },   // UUID from ProductBoard
+  'Start Date': { type: 'date' },             // Release start
+  'End Date': { type: 'date' },               // Release end
+  State: { 
+    type: 'select',
+    options: ['upcoming', 'in-progress', 'completed', 'archived']
+  },
+  'Release Group': { type: 'rich_text' },     // UUID of release group
+  'Product Manager': { type: 'rich_text' },
+  'Engineering Lead': { type: 'rich_text' },
+  Features: { 
+    type: 'relation',
+    database_id: FEATURES_DB_ID,
+    dual_property: {}  // Two-way relation
+  },
+  // Rollups (added manually in UI):
+  'Feature Count': { type: 'rollup' },        // Count of Features.Name
+  'On Track Count': { type: 'rollup' },       // Count Features where Health = on-track
+  'At Risk Count': { type: 'rollup' },        // Count Features where Health = at-risk
+  'Health %': { type: 'formula' }             // (On Track / Feature Count) * 100
+}
+```
+
+**Features Database:**
+```javascript
+{
+  Name: { type: 'title' },                    // Feature name
+  'Feature ID': { type: 'rich_text' },        // UUID from ProductBoard
+  Status: { 
+    type: 'select',
+    options: [
+      'Released', 'In Implementation', 'Being shaped',
+      'Prioritized', 'Road-mapped', 'Created',
+      'Challenged', 'Celebration', 'Will not implement'
+    ]
+  },
+  'Health Status': { 
+    type: 'select',
+    options: ['on-track', 'needs-attention', 'at-risk', 'off-track', 'unknown']
+  },
+  'Product Manager': { type: 'rich_text' },
+  'Engineering Lead': { type: 'rich_text' },
+  Release: { 
+    type: 'relation',
+    database_id: RELEASES_DB_ID,
+    dual_property: {}  // Two-way relation
+  },
+  'Productboard Link': { type: 'url' },
+  'Last Updated': { type: 'last_edited_time' }
+}
+```
+
+---
+
+## ProductBoard API - CRITICAL INFORMATION
+
+### Working Endpoints (API v1):
+
+**DO NOT use API v2 - filters don't work correctly!**
+
+✅ **Step 1: Get all releases**
+```
+GET https://api.productboard.com/releases
+Headers:
+  X-Version: 1
+  Authorization: Bearer {token}
+```
+
+✅ **Step 2: Get feature assignments for a release**
+```
+GET https://api.productboard.com/feature-release-assignments?release.id={releaseId}
+Headers:
+  X-Version: 1
+  Authorization: Bearer {token}
+```
+
+✅ **Step 3: Get feature details (including health)**
+```
+GET https://api.productboard.com/features/{featureId}
+Headers:
+  X-Version: 1
+  Authorization: Bearer {token}
+```
+
+### Data Transformations:
+
+**Health Status Mapping:**
+```javascript
+// ProductBoard → Notion
+const healthMap = {
+  'on-track': 'on-track',
+  'needs-attention': 'needs-attention',
+  'at-risk': 'at-risk',
+  'off-track': 'off-track',
+  null: 'unknown',
+  undefined: 'unknown'
+};
+
+// Always lowercase
+health = (pbHealth || 'unknown').toLowerCase();
+```
+
+**Date Formatting:**
+```javascript
+// ProductBoard: "2025-05-05T00:00:00Z"
+// Notion: "2025-05-05"
+date = pbDate.split('T')[0];
+```
+
+---
+
+## Notion API - CRITICAL INFORMATION
+
+### Rate Limits:
+- **3 requests per second** (Notion's soft limit)
+- Use 350ms delay between requests: `await sleep(350)`
+
+### Creating Two-Way Relations:
+
+**In Releases database:**
+```javascript
+properties: {
+  Features: {
+    relation: {
+      database_id: FEATURES_DB_ID,
+      type: "dual_property",
+      dual_property: {}
+    }
+  }
+}
+```
+
+**In Features database:**
+```javascript
+properties: {
+  Release: {
+    relation: {
+      database_id: RELEASES_DB_ID,
+      type: "dual_property",
+      dual_property: {}
+    }
+  }
+}
+```
+
+### Linking Pages:
+```javascript
+// In feature page:
+properties: {
+  Release: {
+    relation: [{ id: releasePageId }]
+  }
+}
+```
+
+### Rollups (CANNOT be created via API):
+
+Must be added manually in Notion UI. Document this requirement clearly.
+
+---
+
+## Code Style & Patterns
+
+### ES Modules:
+```javascript
+import dotenv from 'dotenv';
+import { Client } from '@notionhq/client';
+
+dotenv.config({ path: '.env.personal' });
+```
+
+### Error Handling:
+```javascript
+try {
+  await notion.pages.create({...});
+} catch (error) {
+  console.error(`Failed to create page: ${error.message}`);
+  // Log but continue with next item
+}
+```
+
+### Logging:
+```javascript
+console.log('✅ Success message');
+console.error('❌ Error message');
+console.log('⏳ In progress...');
+console.log('📊 Statistics');
+```
+
+### Rate Limiting:
+```javascript
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Between Notion API calls:
+await sleep(350); // 350ms = ~2.8 req/sec
+```
+
+### ID Mapping for Incremental Sync:
+```javascript
+// Build map of ProductBoard ID → Notion Page ID
+const idMap = new Map();
+
+// Query existing pages
+const existing = await notion.databases.query({
+  database_id: FEATURES_DB_ID
+});
+
+existing.results.forEach(page => {
+  const pbId = page.properties['Feature ID']?.rich_text?.[0]?.plain_text;
+  if (pbId) {
+    idMap.set(pbId, page.id);
+  }
+});
+```
+
+---
+
+## Key Reminders
+
+1. **Always use ProductBoard API v1** - v2 filters don't work
+2. **Three-step fetch**: releases → assignments → features
+3. **Two-way relations** use `dual_property` format
+4. **Rollups MUST be manual** - document clearly
+5. **Rate limit**: 350ms between Notion calls
+6. **ID mapping** essential for incremental sync
+7. **Health normalization**: lowercase, null → "unknown"
+8. **ES modules**: use `import`, not `require`
+
+---
+
+This is your single source of truth. Follow PROJECT-PLAN.md for step-by-step implementation.
