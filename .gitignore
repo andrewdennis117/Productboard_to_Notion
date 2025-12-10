@@ -1,1 +1,36 @@
-node_modules/ .env.personal data/ logs/
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.personal
+.env.local
+.env.*.local
+
+# Data files (may contain sensitive info or large exports)
+data/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
