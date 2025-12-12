@@ -3,10 +3,26 @@ import { Client } from '@notionhq/client';
 
 dotenv.config({ path: '.env.personal' });
 
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
+const NOTION_API_KEY = process.env.NOTION_API_KEY;
+const RELEASES_DB_ID = process.env.NOTION_RELEASES_DB_ID;
+const FEATURES_DB_ID = process.env.NOTION_FEATURES_DB_ID;
 
-const RELEASES_DB_ID = '2c001196-b8da-8066-94c1-eabf95f92ce3';
-const FEATURES_DB_ID = '2c001196-b8da-805c-ad3e-ffa435aec8ac';
+if (!NOTION_API_KEY) {
+  console.error('❌ NOTION_API_KEY not found in .env.personal');
+  process.exit(1);
+}
+
+if (!RELEASES_DB_ID) {
+  console.error('❌ NOTION_RELEASES_DB_ID not found in .env.personal');
+  process.exit(1);
+}
+
+if (!FEATURES_DB_ID) {
+  console.error('❌ NOTION_FEATURES_DB_ID not found in .env.personal');
+  process.exit(1);
+}
+
+const notion = new Client({ auth: NOTION_API_KEY });
 
 console.log('🧪 Direct Database Test - No Search API\n');
 console.log('='.repeat(60));
@@ -30,23 +46,35 @@ async function testDirectAccess() {
   // Test 2: Query Releases database
   console.log('\n📊 Test 2: Query Releases Database');
   try {
-    const query = await notion.databases.query({
-      database_id: RELEASES_DB_ID,
-      page_size: 5
+    const queryResponse = await fetch(`https://api.notion.com/v1/databases/${RELEASES_DB_ID}/query`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NOTION_API_KEY}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ page_size: 5 })
     });
-    console.log('   ✅ SUCCESS - Can query database');
-    console.log(`   Found ${query.results.length} pages`);
     
-    if (query.results.length > 0) {
+    if (!queryResponse.ok) {
+      const errorText = await queryResponse.text();
+      throw new Error(`HTTP ${queryResponse.status}: ${errorText}`);
+    }
+    
+    const query = await queryResponse.json();
+    console.log('   ✅ SUCCESS - Can query database');
+    console.log(`   Found ${query.results?.length || 0} pages`);
+    
+    if (query.results && query.results.length > 0) {
       console.log('   Sample releases:');
       query.results.slice(0, 3).forEach(page => {
-        const name = page.properties.Name?.title?.[0]?.plain_text || 'Untitled';
+        const name = page.properties?.Name?.title?.[0]?.plain_text || 'Untitled';
         console.log(`      - ${name}`);
       });
     }
   } catch (error) {
     console.log('   ❌ FAILED - Cannot query');
-    console.log(`   Error: ${error.code} - ${error.message}`);
+    console.log(`   Error: ${error.message || error}`);
     return false;
   }
   
@@ -100,23 +128,35 @@ async function testDirectAccess() {
   // Test 5: Query Features database
   console.log('\n📊 Test 5: Query Features Database');
   try {
-    const query = await notion.databases.query({
-      database_id: FEATURES_DB_ID,
-      page_size: 5
+    const queryResponse = await fetch(`https://api.notion.com/v1/databases/${FEATURES_DB_ID}/query`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NOTION_API_KEY}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ page_size: 5 })
     });
-    console.log('   ✅ SUCCESS - Can query database');
-    console.log(`   Found ${query.results.length} pages`);
     
-    if (query.results.length > 0) {
+    if (!queryResponse.ok) {
+      const errorText = await queryResponse.text();
+      throw new Error(`HTTP ${queryResponse.status}: ${errorText}`);
+    }
+    
+    const query = await queryResponse.json();
+    console.log('   ✅ SUCCESS - Can query database');
+    console.log(`   Found ${query.results?.length || 0} pages`);
+    
+    if (query.results && query.results.length > 0) {
       console.log('   Sample features:');
       query.results.slice(0, 3).forEach(page => {
-        const name = page.properties.Name?.title?.[0]?.plain_text || 'Untitled';
+        const name = page.properties?.Name?.title?.[0]?.plain_text || 'Untitled';
         console.log(`      - ${name}`);
       });
     }
   } catch (error) {
     console.log('   ❌ FAILED - Cannot query');
-    console.log(`   Error: ${error.code} - ${error.message}`);
+    console.log(`   Error: ${error.message || error}`);
     return false;
   }
   

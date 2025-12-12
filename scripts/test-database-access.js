@@ -3,10 +3,26 @@ import { Client } from '@notionhq/client';
 
 dotenv.config({ path: '.env.personal' });
 
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
+const NOTION_API_KEY = process.env.NOTION_API_KEY;
+const RELEASES_DB_ID = process.env.NOTION_RELEASES_DB_ID;
+const FEATURES_DB_ID = process.env.NOTION_FEATURES_DB_ID;
 
-const RELEASES_DB_ID = '2c001196-b8da-8066-94c1-eabf95f92ce3';
-const FEATURES_DB_ID = '2c001196-b8da-805c-ad3e-ffa435aec8ac';
+if (!NOTION_API_KEY) {
+  console.error('❌ NOTION_API_KEY not found in .env.personal');
+  process.exit(1);
+}
+
+if (!RELEASES_DB_ID) {
+  console.error('❌ NOTION_RELEASES_DB_ID not found in .env.personal');
+  process.exit(1);
+}
+
+if (!FEATURES_DB_ID) {
+  console.error('❌ NOTION_FEATURES_DB_ID not found in .env.personal');
+  process.exit(1);
+}
+
+const notion = new Client({ auth: NOTION_API_KEY });
 
 console.log('🔍 Direct Database Access Test\n');
 console.log('='.repeat(60));
@@ -23,27 +39,55 @@ async function testDatabases() {
     
     console.log('   ✅ ACCESSIBLE!');
     console.log(`   Name: ${db.title?.[0]?.plain_text || 'Untitled'}`);
-    console.log(`   Properties: ${Object.keys(db.properties).join(', ')}`);
+    if (db.properties) {
+      console.log(`   Properties: ${Object.keys(db.properties).join(', ')}`);
+    } else {
+      console.log(`   Properties: (unavailable)`);
+    }
     
-    // Try to query it
-    const query = await notion.databases.query({
-      database_id: RELEASES_DB_ID,
-      page_size: 3
-    });
-    
-    console.log(`   Pages: ${query.results.length} items`);
-    if (query.results.length > 0) {
-      query.results.forEach(page => {
-        const name = page.properties.Name?.title?.[0]?.plain_text || 'Untitled';
-        console.log(`      - ${name}`);
+    // Try to query it using direct API call
+    try {
+      const queryResponse = await fetch(`https://api.notion.com/v1/databases/${RELEASES_DB_ID}/query`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${NOTION_API_KEY}`,
+          'Notion-Version': '2022-06-28',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ page_size: 3 })
       });
+      
+      if (queryResponse.ok) {
+        const query = await queryResponse.json();
+        if (query && query.results) {
+          console.log(`   Pages: ${query.results.length} items`);
+          if (query.results.length > 0) {
+            query.results.forEach(page => {
+              const name = page.properties?.Name?.title?.[0]?.plain_text || 'Untitled';
+              console.log(`      - ${name}`);
+            });
+          }
+        } else {
+          console.log(`   ⚠️  Query response format unexpected`);
+        }
+      } else {
+        const errorText = await queryResponse.text();
+        console.log(`   ⚠️  Could not query pages: ${queryResponse.status} ${queryResponse.statusText}`);
+        if (errorText) {
+          console.log(`   Error details: ${errorText.substring(0, 200)}`);
+        }
+      }
+    } catch (queryError) {
+      console.log(`   ⚠️  Query error: ${queryError.message}`);
     }
     
   } catch (error) {
-    console.log('   ❌ NOT ACCESSIBLE');
-    console.log(`   Error: ${error.code} - ${error.message}`);
+    console.log('   ❌ ERROR');
+    const errorCode = error?.code || 'unknown';
+    const errorMessage = error?.message || String(error);
+    console.log(`   Error: ${errorCode} - ${errorMessage}`);
     
-    if (error.code === 'object_not_found') {
+    if (errorCode === 'object_not_found') {
       console.log(`\n   💡 FIX THIS:`);
       console.log(`      1. Open: https://www.notion.so/${RELEASES_DB_ID.replace(/-/g, '')}`);
       console.log(`      2. Click ••• at the top-right`);
@@ -65,27 +109,55 @@ async function testDatabases() {
     
     console.log('   ✅ ACCESSIBLE!');
     console.log(`   Name: ${db.title?.[0]?.plain_text || 'Untitled'}`);
-    console.log(`   Properties: ${Object.keys(db.properties).join(', ')}`);
+    if (db.properties) {
+      console.log(`   Properties: ${Object.keys(db.properties).join(', ')}`);
+    } else {
+      console.log(`   Properties: (unavailable)`);
+    }
     
-    // Try to query it
-    const query = await notion.databases.query({
-      database_id: FEATURES_DB_ID,
-      page_size: 3
-    });
-    
-    console.log(`   Pages: ${query.results.length} items`);
-    if (query.results.length > 0) {
-      query.results.forEach(page => {
-        const name = page.properties.Name?.title?.[0]?.plain_text || 'Untitled';
-        console.log(`      - ${name}`);
+    // Try to query it using direct API call
+    try {
+      const queryResponse = await fetch(`https://api.notion.com/v1/databases/${FEATURES_DB_ID}/query`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${NOTION_API_KEY}`,
+          'Notion-Version': '2022-06-28',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ page_size: 3 })
       });
+      
+      if (queryResponse.ok) {
+        const query = await queryResponse.json();
+        if (query && query.results) {
+          console.log(`   Pages: ${query.results.length} items`);
+          if (query.results.length > 0) {
+            query.results.forEach(page => {
+              const name = page.properties?.Name?.title?.[0]?.plain_text || 'Untitled';
+              console.log(`      - ${name}`);
+            });
+          }
+        } else {
+          console.log(`   ⚠️  Query response format unexpected`);
+        }
+      } else {
+        const errorText = await queryResponse.text();
+        console.log(`   ⚠️  Could not query pages: ${queryResponse.status} ${queryResponse.statusText}`);
+        if (errorText) {
+          console.log(`   Error details: ${errorText.substring(0, 200)}`);
+        }
+      }
+    } catch (queryError) {
+      console.log(`   ⚠️  Query error: ${queryError.message}`);
     }
     
   } catch (error) {
-    console.log('   ❌ NOT ACCESSIBLE');
-    console.log(`   Error: ${error.code} - ${error.message}`);
+    console.log('   ❌ ERROR');
+    const errorCode = error?.code || 'unknown';
+    const errorMessage = error?.message || String(error);
+    console.log(`   Error: ${errorCode} - ${errorMessage}`);
     
-    if (error.code === 'object_not_found') {
+    if (errorCode === 'object_not_found') {
       console.log(`\n   💡 FIX THIS:`);
       console.log(`      1. Open: https://www.notion.so/${FEATURES_DB_ID.replace(/-/g, '')}`);
       console.log(`      2. Click ••• at the top-right`);

@@ -117,20 +117,39 @@ async function fetchFeatureDetails(featureId) {
     // Extract health status from lastHealthUpdate
     const health = feature.lastHealthUpdate?.status || null;
     
+    // Extract Product Manager from owner field (ProductBoard API structure)
+    // ProductBoard returns: { "owner": { "email": "test@coder.com" } }
+    const productManager = feature.owner?.email || 
+                          feature.productManager?.name || 
+                          feature.productManager?.displayName ||
+                          feature.productManager?.email ||
+                          (typeof feature.productManager === 'string' ? feature.productManager : null) ||
+                          null;
+    
+    // Extract Engineering Lead (may still be in engineeringLead field)
+    const engineeringLead = feature.engineeringLead?.name || 
+                           feature.engineeringLead?.displayName ||
+                           feature.engineeringLead?.email ||
+                           (typeof feature.engineeringLead === 'string' ? feature.engineeringLead : null) ||
+                           null;
+    
     // Transform feature to include only needed fields
     return {
       id: feature.id,
       name: feature.name,
       status: feature.status?.name || null,
       health: normalizeHealth(health),
-      productManager: feature.productManager?.name || null,
-      engineeringLead: feature.engineeringLead?.name || null,
+      productManager: productManager,
+      engineeringLead: engineeringLead,
       productboardLink: feature.links?.html || null,
       // Keep raw data for reference
       raw: {
         status: feature.status,
         lastHealthUpdate: feature.lastHealthUpdate,
-        health: health
+        health: health,
+        owner: feature.owner,
+        productManager: feature.productManager,
+        engineeringLead: feature.engineeringLead
       }
     };
   } catch (error) {

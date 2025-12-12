@@ -18,7 +18,17 @@ if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
+// Setup data directory
+const dataDir = path.join(__dirname, '..', 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
 const logFile = path.join(logsDir, 'sync.log');
+const notionPayloadLogFile = path.join(logsDir, `notion-payloads-${Date.now()}.json`);
+
+// Array to store all Notion API payloads
+const notionPayloads = [];
 
 function log(message, type = 'info') {
   const timestamp = new Date().toISOString();
@@ -33,6 +43,24 @@ function log(message, type = 'info') {
   } else {
     console.log(message);
   }
+}
+
+function logNotionPayload(operation, type, payload, pageId = null, result = null) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    operation: operation, // 'create' or 'update'
+    type: type, // 'release' or 'feature'
+    pageId: pageId,
+    payload: JSON.parse(JSON.stringify(payload)), // Deep clone to avoid reference issues
+    result: result ? {
+      id: result.id,
+      url: result.url,
+      created_time: result.created_time,
+      last_edited_time: result.last_edited_time
+    } : null
+  };
+  
+  notionPayloads.push(entry);
 }
 
 const NOTION_API_KEY = process.env.NOTION_API_KEY;
@@ -113,13 +141,37 @@ async function fetchFeatureDetails(featureId) {
     
     const health = feature.lastHealthUpdate?.status || null;
     
+    // Extract Product Manager from owner field (ProductBoard API structure)
+    // ProductBoard returns: { "owner": { "email": "test@coder.com" } }
+    const productManager = feature.owner?.email || 
+                          feature.productManager?.name || 
+                          feature.productManager?.displayName ||
+                          feature.productManager?.email ||
+                          (typeof feature.productManager === 'string' ? feature.productManager : null) ||
+                          null;
+    
+    // Extract Engineering Lead (may still be in engineeringLead field)
+    const engineeringLead = feature.engineeringLead?.name || 
+                           feature.engineeringLead?.displayName ||
+                           feature.engineeringLead?.email ||
+                           (typeof feature.engineeringLead === 'string' ? feature.engineeringLead : null) ||
+                           null;
+    
+    // Debug logging for first few features to verify API structure
+    if (Math.random() < 0.05) { // Log ~5% of features for debugging
+      log(`   Debug feature ${featureId}: PM=${productManager}, EL=${engineeringLead}`, 'info');
+      log(`   Raw owner: ${JSON.stringify(feature.owner)}`, 'info');
+      log(`   Raw productManager: ${JSON.stringify(feature.productManager)}`, 'info');
+      log(`   Raw engineeringLead: ${JSON.stringify(feature.engineeringLead)}`, 'info');
+    }
+    
     return {
       id: feature.id,
       name: feature.name,
       status: feature.status?.name || null,
       health: normalizeHealth(health),
-      productManager: feature.productManager?.name || null,
-      engineeringLead: feature.engineeringLead?.name || null,
+      productManager: productManager,
+      engineeringLead: engineeringLead,
       productboardLink: feature.links?.html || null
     };
   } catch (error) {
@@ -234,12 +286,8 @@ async function getNotionPageData(notion, pageId, type) {
     if (type === 'release') {
       return {
         name: props['Name']?.title?.[0]?.plain_text || '',
-        startDate: props['Start Date']?.date?.start || null,
-        endDate: props['End Date']?.date?.start || null,
         state: props['State']?.select?.name || null,
-        releaseGroup: props['Release Group']?.rich_text?.[0]?.plain_text || null,
-        productManager: props['Product Manager']?.rich_text?.[0]?.plain_text || null,
-        engineeringLead: props['Engineering Lead']?.rich_text?.[0]?.plain_text || null
+        releaseGroup: props['Release Group']?.rich_text?.[0]?.plain_text || null
       };
     } else {
       return {
@@ -247,7 +295,6 @@ async function getNotionPageData(notion, pageId, type) {
         status: props['Status']?.select?.name || null,
         health: props['Health Status']?.select?.name || null,
         productManager: props['Product Manager']?.rich_text?.[0]?.plain_text || null,
-        engineeringLead: props['Engineering Lead']?.rich_text?.[0]?.plain_text || null,
         productboardLink: props['Productboard Link']?.url || null,
         releaseId: props['Release']?.relation?.[0]?.id || null
       };
@@ -286,23 +333,11 @@ function mapReleaseToNotion(release) {
     'Productboard ID': {
       rich_text: [{ text: { content: release.id } }]
     },
-    'Start Date': release.startDate ? {
-      date: { start: release.startDate }
-    } : undefined,
-    'End Date': release.endDate ? {
-      date: { start: release.endDate }
-    } : undefined,
     'State': release.state ? {
       select: { name: release.state }
     } : undefined,
     'Release Group': release.releaseGroup ? {
       rich_text: [{ text: { content: release.releaseGroup } }]
-    } : undefined,
-    'Product Manager': release.productManager ? {
-      rich_text: [{ text: { content: release.productManager } }]
-    } : undefined,
-    'Engineering Lead': release.engineeringLead ? {
-      rich_text: [{ text: { content: release.engineeringLead } }]
     } : undefined
   };
 }
@@ -322,12 +357,10 @@ function mapFeatureToNotion(feature, releasePageId) {
     'Health Status': feature.health ? {
       select: { name: feature.health }
     } : undefined,
-    'Product Manager': feature.productManager ? {
-      rich_text: [{ text: { content: feature.productManager } }]
-    } : undefined,
-    'Engineering Lead': feature.engineeringLead ? {
-      rich_text: [{ text: { content: feature.engineeringLead } }]
-    } : undefined,
+    // Always include Product Manager, even if null (to clear existing values)
+    'Product Manager': {
+      rich_text: feature.productManager ? [{ text: { content: feature.productManager } }] : []
+    },
     'Release': releasePageId ? {
       relation: [{ id: releasePageId }]
     } : undefined,
@@ -408,6 +441,7 @@ async function main() {
         }
       });
       feature.releaseId = releaseIds[0] || null;
+      feature.releaseIds = releaseIds; // Keep all release IDs for reference
       features.push(feature);
       console.log('✅');
     } else {
@@ -415,6 +449,37 @@ async function main() {
     }
     await sleep(50);
   }
+  
+  // Save all ProductBoard feature data to JSON file
+  const productboardFeaturesFile = path.join(dataDir, `productboard-features-${Date.now()}.json`);
+  const featuresExport = {
+    fetchedAt: new Date().toISOString(),
+    summary: {
+      totalFeatures: features.length,
+      featuresWithProductManager: features.filter(f => f.productManager).length,
+      featuresWithEngineeringLead: features.filter(f => f.engineeringLead).length,
+      featuresWithHealth: features.filter(f => f.health && f.health !== 'unknown').length,
+      featuresWithStatus: features.filter(f => f.status).length,
+      featuresWithRelease: features.filter(f => f.releaseId).length
+    },
+    releases: releases.map(r => ({
+      id: r.id,
+      name: r.name,
+      startDate: r.startDate,
+      endDate: r.endDate,
+      state: r.state,
+      productManager: r.productManager,
+      engineeringLead: r.engineeringLead
+    })),
+    features: features,
+    releaseFeatureMap: Object.fromEntries(releaseFeatureMap)
+  };
+  
+  fs.writeFileSync(productboardFeaturesFile, JSON.stringify(featuresExport, null, 2), 'utf8');
+  log(`\n💾 ProductBoard feature data saved to: ${productboardFeaturesFile}`);
+  log(`   Total features: ${features.length}`);
+  log(`   Features with Product Manager: ${featuresExport.summary.featuresWithProductManager}`);
+  log(`   Features with Engineering Lead: ${featuresExport.summary.featuresWithEngineeringLead}`);
   
   // Step 3: Sync releases
   log('\n' + '='.repeat(50));
@@ -441,12 +506,8 @@ async function main() {
       if (notionData) {
         const pbData = {
           name: release.name,
-          startDate: release.startDate,
-          endDate: release.endDate,
           state: release.state,
-          releaseGroup: release.releaseGroup,
-          productManager: release.productManager,
-          engineeringLead: release.engineeringLead
+          releaseGroup: release.releaseGroup
         };
         
         const changes = detectChanges(notionData, pbData);
@@ -454,15 +515,23 @@ async function main() {
         if (changes) {
           // Update release
           const properties = mapReleaseToNotion(release);
+          const cleanedProperties = removeUndefinedProperties(properties);
+          const updatePayload = {
+            page_id: notionPageId,
+            properties: cleanedProperties
+          };
+          
+          // Log the payload before sending
+          logNotionPayload('update', 'release', updatePayload, notionPageId);
+          
           try {
-            await notion.pages.update({
-              page_id: notionPageId,
-              properties: removeUndefinedProperties(properties)
-            });
+            const result = await notion.pages.update(updatePayload);
+            logNotionPayload('update', 'release', updatePayload, notionPageId, result);
             stats.releases.updated++;
             console.log(`✅ Updated (${Object.keys(changes).length} changes)`);
           } catch (error) {
             console.log(`❌ Error: ${error.message}`);
+            log(`Failed to update release ${release.name}: ${error.message}`, 'error');
           }
         } else {
           stats.releases.unchanged++;
@@ -479,17 +548,25 @@ async function main() {
       process.stdout.write(`   Creating release ${i + 1}/${releases.length}: ${release.name}... `);
       
       const properties = mapReleaseToNotion(release);
+      const cleanedProperties = removeUndefinedProperties(properties);
+      const createPayload = {
+        parent: { database_id: NOTION_RELEASES_DB_ID },
+        properties: cleanedProperties
+      };
+      
+      // Log the payload before sending
+      logNotionPayload('create', 'release', createPayload);
+      
       try {
-        const page = await notion.pages.create({
-          parent: { database_id: NOTION_RELEASES_DB_ID },
-          properties: removeUndefinedProperties(properties)
-        });
+        const page = await notion.pages.create(createPayload);
+        logNotionPayload('create', 'release', createPayload, page.id, page);
         releasePageMap.set(release.id, page.id);
         idMap.releases.set(release.id, page.id);
         stats.releases.created++;
         console.log('✅ Created');
       } catch (error) {
         console.log(`❌ Error: ${error.message}`);
+        log(`Failed to create release ${release.name}: ${error.message}`, 'error');
       }
     }
     
@@ -519,7 +596,6 @@ async function main() {
           status: feature.status,
           health: feature.health,
           productManager: feature.productManager,
-          engineeringLead: feature.engineeringLead,
           productboardLink: feature.productboardLink,
           releaseId: releasePageId
         };
@@ -538,16 +614,24 @@ async function main() {
         if (changes || releaseChanged) {
           // Update feature
           const properties = mapFeatureToNotion(feature, releasePageId);
+          const cleanedProperties = removeUndefinedProperties(properties);
+          const updatePayload = {
+            page_id: notionPageId,
+            properties: cleanedProperties
+          };
+          
+          // Log the payload before sending
+          logNotionPayload('update', 'feature', updatePayload, notionPageId);
+          
           try {
-            await notion.pages.update({
-              page_id: notionPageId,
-              properties: removeUndefinedProperties(properties)
-            });
+            const result = await notion.pages.update(updatePayload);
+            logNotionPayload('update', 'feature', updatePayload, notionPageId, result);
             stats.features.updated++;
             const changeCount = changes ? Object.keys(changes).length : 0;
             console.log(`✅ Updated (${changeCount + (releaseChanged ? 1 : 0)} changes)`);
           } catch (error) {
             console.log(`❌ Error: ${error.message}`);
+            log(`Failed to update feature ${feature.name}: ${error.message}`, 'error');
           }
         } else {
           stats.features.unchanged++;
@@ -564,11 +648,18 @@ async function main() {
       process.stdout.write(`   Creating feature ${i + 1}/${features.length}: ${feature.name}... `);
       
       const properties = mapFeatureToNotion(feature, releasePageId);
+      const cleanedProperties = removeUndefinedProperties(properties);
+      const createPayload = {
+        parent: { database_id: NOTION_FEATURES_DB_ID },
+        properties: cleanedProperties
+      };
+      
+      // Log the payload before sending
+      logNotionPayload('create', 'feature', createPayload);
+      
       try {
-        const page = await notion.pages.create({
-          parent: { database_id: NOTION_FEATURES_DB_ID },
-          properties: removeUndefinedProperties(properties)
-        });
+        const page = await notion.pages.create(createPayload);
+        logNotionPayload('create', 'feature', createPayload, page.id, page);
         featurePageMap.set(feature.id, page.id);
         idMap.features.set(feature.id, page.id);
         stats.features.created++;
@@ -581,6 +672,7 @@ async function main() {
         }
       } catch (error) {
         console.log(`❌ Error: ${error.message}`);
+        log(`Failed to create feature ${feature.name}: ${error.message}`, 'error');
       }
     }
     
@@ -610,18 +702,25 @@ async function main() {
     if (featurePageIds.length > 0) {
       process.stdout.write(`   Updating ${release.name} with ${featurePageIds.length} features... `);
       
-      try {
-        await notion.pages.update({
-          page_id: releasePageId,
-          properties: {
-            'Features': {
-              relation: featurePageIds.map(id => ({ id }))
-            }
+      const relationPayload = {
+        page_id: releasePageId,
+        properties: {
+          'Features': {
+            relation: featurePageIds.map(id => ({ id }))
           }
-        });
+        }
+      };
+      
+      // Log the payload before sending
+      logNotionPayload('update', 'release-relations', relationPayload, releasePageId);
+      
+      try {
+        const result = await notion.pages.update(relationPayload);
+        logNotionPayload('update', 'release-relations', relationPayload, releasePageId, result);
         console.log('✅');
       } catch (error) {
         console.log(`❌ Error: ${error.message}`);
+        log(`Failed to update release relations for ${release.name}: ${error.message}`, 'error');
       }
       
       await sleep(350);
@@ -642,6 +741,23 @@ async function main() {
   log(`  ✅ Updated: ${stats.features.updated}`);
   log(`  ✅ Unchanged: ${stats.features.unchanged}`);
   log(`\n⏱️  Duration: ${duration}s`);
+  
+  // Write Notion payloads to JSON file
+  const payloadLogData = {
+    syncStartTime: new Date(startTime).toISOString(),
+    syncEndTime: new Date().toISOString(),
+    duration: `${duration}s`,
+    summary: {
+      releases: stats.releases,
+      features: stats.features,
+      totalOperations: notionPayloads.length
+    },
+    operations: notionPayloads
+  };
+  
+  fs.writeFileSync(notionPayloadLogFile, JSON.stringify(payloadLogData, null, 2), 'utf8');
+  log(`\n📝 Notion API payloads logged to: ${notionPayloadLogFile}`);
+  log(`   Total operations logged: ${notionPayloads.length}`);
   log('\n🎉 Sync Complete!');
 }
 
